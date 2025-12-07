@@ -24,10 +24,10 @@ random.shuffle(R1)
 
 R2 = []
 for i in range(1, 1001):
-    R1.append([5, i])
+    R2.append([5, i])
 
 for i in range(1001, 2001):
-    R1.append([7, i])
+    R2.append([7, i])
 R2.append([2002, 8])
 random.shuffle(R2)
 
@@ -138,8 +138,8 @@ else:
         print(r)
         
 # Get and print the query execution plan
-mycursor.execute("EXPLAIN SELECT r1.a1, r2.a2, r3.a3, r3.a4 FROM r1 join r2 on r1.a2 = r2.a2 join r3 on r2.a3 = r3.a3;")
+mycursor.execute("EXPLAIN FORMAT=TREE SELECT r1.a1, r2.a2, r3.a3, r3.a4 FROM r1 join r2 on r1.a2 = r2.a2 join r3 on r2.a3 = r3.a3;")
 myresult = mycursor.fetchall()
 print("Query Execution Plan from MySQL:")
 for r in myresult:
-    print(r)
+    print(r[0].replace('\\n', '\n'))
