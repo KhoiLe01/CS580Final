@@ -1,0 +1,334 @@
+import csv
+import time
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional, List
+
+
+############################################################
+# Global schema (same as generic_join.py)
+############################################################
+SCHEMAS = {
+    "R1": ["A1", "A2"],
+    "R2": ["A2", "A3"],
+    "R3": ["A1", "A3"],
+    "R4": ["A3", "A4"],
+    "R5": ["A4", "A5"],
+    "R6": ["A5", "A6"],
+    "R7": ["A4", "A6"],
+}
+
+ATTR_ORDER = ["A1", "A2", "A3", "A4", "A5", "A6"]
+
+
+############################################################
+# Bag dataclass for the hypertree decomposition
+############################################################
+@dataclass
+class Bag:
+    name: str
+    vars: List[str]
+    lambdas: List[str]
+    parent: Optional[str] = None
+    children: List[str] = field(default_factory=list)
+
+
+############################################################
+# Load relations (identical logic to generic_join.py)
+############################################################
+def load_relations(dir_path):
+    """
+    Loads R1..R7 from dir_path and returns a dict name -> list of tuples.
+    """
+    base = Path(dir_path)
+    relations = {}
+
+    for rname, schema in SCHEMAS.items():
+        filename = base / f"{rname}.csv"
+        rows = []
+
+        with open(filename, newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                tup = tuple(int(row[attr]) for attr in schema)
+                rows.append(tup)
+
+        relations[rname] = rows
+
+    return relations
+
+
+############################################################
+# Build the fixed GHW decomposition (width 2)
+############################################################
+def build_bags():
+    bags = {}
+
+    bags["B1"] = Bag(
+        name="B1",
+        vars=["A1", "A2", "A3"],
+        lambdas=["R1", "R2"],
+        parent=None,
+        children=["B2", "B3"],
+    )
+
+    bags["B2"] = Bag(
+        name="B2",
+        vars=["A1", "A3"],
+        lambdas=["R3"],
+        parent="B1",
+        children=[],
+    )
+
+    bags["B3"] = Bag(
+        name="B3",
+        vars=["A3", "A4", "A5"],
+        lambdas=["R4", "R5"],
+        parent="B1",
+        children=["B4"],
+    )
+
+    bags["B4"] = Bag(
+        name="B4",
+        vars=["A4", "A5", "A6"],
+        lambdas=["R6", "R7"],
+        parent="B3",
+        children=[],
+    )
+
+    return bags
+
+
+############################################################
+# Basic relation-table utilities
+############################################################
+def relation_to_rows(rname, relations):
+    schema = SCHEMAS[rname]
+    rows = []
+    for tup in relations[rname]:
+        row = {}
+        for i, attr in enumerate(schema):
+            row[attr] = tup[i]
+        rows.append(row)
+    return rows
+
+
+def natural_join_hash(t1, t2):
+    """
+    Efficient natural join using a hash table.
+    Joins on all common attributes in O(N) expected time.
+    """
+
+    if not t1 or not t2:
+        return []
+
+    common = list(set(t1[0]).intersection(t2[0]))
+
+    # Build hash table on t2
+    hash_tbl = {}
+    for row in t2:
+        key = tuple(row[a] for a in common)
+        hash_tbl.setdefault(key, []).append(row)
+
+    # Probe with t1
+    out = []
+    for r1 in t1:
+        key = tuple(r1[a] for a in common)
+        if key in hash_tbl:
+            for r2 in hash_tbl[key]:
+                out.append({**r1, **r2})
+
+    return out
+
+
+
+def project(table, attrs):
+    return [{a: row[a] for a in attrs} for row in table]
+
+
+def semijoin_fast(outer, inner, attrs):
+    if not outer or not inner or not attrs:
+        return outer
+
+    # Build hash set on the child
+    keyset = {tuple(row[a] for a in attrs) for row in inner}
+
+    # Filter outer
+    return [
+        row for row in outer
+        if tuple(row[a] for a in attrs) in keyset
+    ]
+
+
+############################################################
+# Bag-table construction
+############################################################
+def build_bag_tables(bags, relations):
+    tables = {}
+
+    for bname, bag in bags.items():
+        rels = bag.lambdas
+        table = relations[rels[0]]
+        for r in rels[1:]:
+            table = natural_join_hash(table, relations[r])
+        # Project to bag vars
+        tables[bname] = [
+            {a: row[a] for a in bag.vars}
+            for row in table
+        ]
+
+    return tables
+
+
+############################################################
+# Tree traversals and semijoin reductions
+############################################################
+def postorder(bags, root):
+    order = []
+
+    def dfs(b):
+        for c in bags[b].children:
+            dfs(c)
+        order.append(b)
+
+    dfs(root)
+    return order
+
+
+def preorder(bags, root):
+    order = []
+
+    def dfs(b):
+        order.append(b)
+        for c in bags[b].children:
+            dfs(c)
+
+    dfs(root)
+    return order
+
+
+def bottom_up(bags, tables, root="B1"):
+    for b in postorder(bags, root):
+        parent = bags[b].parent
+        if parent is None:
+            continue
+        inter = [v for v in bags[b].vars if v in bags[parent].vars]
+        tables[parent] = semijoin_fast(tables[parent], tables[b], inter)
+
+
+def top_down(bags, tables, root="B1"):
+    for b in preorder(bags, root):
+        for c in bags[b].children:
+            inter = [v for v in bags[b].vars if v in bags[c].vars]
+            tables[c] = semijoin_fast(tables[c], tables[b], inter)
+
+
+############################################################
+# Child indexes for fast enumeration
+############################################################
+def build_child_indexes(bags, tables):
+    """
+    For each parent -> child edge, build an index on the child's
+    intersection attributes so we don't have to scan the whole
+    child table during DFS enumeration.
+    Returns: dict[child_name] = (shared_attrs, index_dict)
+    where index_dict: key tuple -> list of child rows.
+    """
+    child_indexes = {}
+
+    for bname, bag in bags.items():
+        for cname in bag.children:
+            child = bags[cname]
+            # attributes shared between parent and child
+            shared = [v for v in bag.vars if v in child.vars]
+            idx = {}
+            for row in tables[cname]:
+                key = tuple(row[v] for v in shared)
+                idx.setdefault(key, []).append(row)
+            child_indexes[cname] = (shared, idx)
+
+    return child_indexes
+
+############################################################
+# Enumeration of full results (with child indexes)
+############################################################
+def enumerate_results(bags, tables, child_indexes, root="B1"):
+    results = []
+
+    def dfs_at(b, assign, candidate_rows):
+        bag = bags[b]
+
+        # Attributes shared with the current partial assignment
+        shared_with_assign = [v for v in bag.vars if v in assign]
+
+        for row in candidate_rows:
+            # Check consistency with what we already assigned
+            if any(row[v] != assign[v] for v in shared_with_assign):
+                continue
+
+            # Extend the assignment with this bag's variables
+            new_assign = assign.copy()
+            for v in bag.vars:
+                new_assign[v] = row[v]
+
+            if not bag.children:
+                # Only output full assignments (all A1..A6)
+                if all(a in new_assign for a in ATTR_ORDER):
+                    results.append(tuple(new_assign[a] for a in ATTR_ORDER))
+            else:
+                # Recurse into each child, but ONLY on matching child rows
+                for c in bag.children:
+                    shared_c, idx_c = child_indexes[c]
+                    key = tuple(new_assign[v] for v in shared_c)
+                    child_rows = idx_c.get(key)
+                    if not child_rows:
+                        continue
+                    dfs_at(c, new_assign, child_rows)
+
+    # Start DFS at root with the full root table as candidates
+    dfs_at(root, {}, tables[root])
+    return results
+
+
+
+############################################################
+# Public API: run_ghw + time_ghw
+############################################################
+def run_ghw(dirpath):
+    relations = load_relations(dirpath)
+    bags = build_bags()
+
+    # Precompute all relational tables ONCE (as dict rows)
+    rel_tables = {
+        r: relation_to_rows(r, relations)
+        for r in relations
+    }
+
+    # Build bag tables (already projected to bag.vars)
+    tables = build_bag_tables(bags, rel_tables)
+
+    # Semijoin reductions
+    bottom_up(bags, tables)
+    top_down(bags, tables)
+
+    # Build child indexes for fast enumeration
+    child_indexes = build_child_indexes(bags, tables)
+
+    # Enumerate final results
+    return enumerate_results(bags, tables, child_indexes)
+
+
+def time_ghw(dirpath):
+    start = time.time()
+    out = run_ghw(dirpath)
+    end = time.time()
+    return end - start, len(out)
+
+
+############################################################
+# Manual test
+############################################################
+if __name__ == "__main__":
+    t, size = time_ghw("query_relations")
+    print("GHW runtime:", t)
+    print("Output size:", size)
