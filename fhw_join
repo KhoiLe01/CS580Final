@@ -1,0 +1,545 @@
+import csv
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Dict, List, Tuple, Set, Optional
+from generic_join import generic_join_subquery
+
+
+# ===============================================================
+#  SCHEMA FOR THE QUERY q(A1,...,A6)
+# ===============================================================
+SCHEMAS: Dict[str, List[str]] = {
+    "R1": ["A1", "A2"],
+    "R2": ["A2", "A3"],
+    "R3": ["A1", "A3"],
+    "R4": ["A3", "A4"],
+    "R5": ["A4", "A5"],
+    "R6": ["A5", "A6"],
+    "R7": ["A4", "A6"],
+}
+
+ATTR_ORDER = ["A1", "A2", "A3", "A4", "A5", "A6"]
+
+
+# ===============================================================
+#  LOAD RELATIONS
+# ===============================================================
+def load_relations(dir_path: str) -> Dict[str, List[Tuple[int, ...]]]:
+    """
+    Loads the relations R1..R7 from a folder containing the CSV files.
+    Assumes each CSV has headers named exactly as in the schema.
+    """
+    base = Path(dir_path)
+    relations: Dict[str, List[Tuple[int, ...]]] = {}
+
+    for rname, schema in SCHEMAS.items():
+        filename = base / f"{rname}.csv"
+
+        if not filename.exists():
+            raise FileNotFoundError(f"Missing file: {filename}")
+
+        rows: List[Tuple[int, ...]] = []
+        with open(filename, newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                tup = tuple(int(row[attr]) for attr in schema)
+                rows.append(tup)
+        relations[rname] = rows
+
+    return relations
+
+
+# ===============================================================
+#  FRACTIONAL HYPERTREE DECOMPOSITION
+# ===============================================================
+@dataclass
+class FBag:
+    name: str
+    vars: List[str]              # χ(B)
+    lambdas: List[str]           # λ(B)   (relations in the bag)
+    parent: Optional[str] = None
+    children: List[str] = field(default_factory=list)
+    # optional: fractional edge-cover weights (for explanation/logging)
+    weights: Dict[str, float] = field(default_factory=dict)
+
+
+def build_fractional_bags() -> Dict[str, FBag]:
+    """
+    Build the fractional hypertree decomposition for q.
+    Tree: B2 - B1 - B3 - B4, rooted at B1.
+    For this query we just store the fractional cover weights but
+    they don't change the operational semantics (joins/semijoins).
+    """
+    bags: Dict[str, FBag] = {}
+
+    # Bag B1: χ = {A1,A2,A3}, λ = {R1,R2}, fractional cover x_R1 = x_R2 = 1
+    bags["B1"] = FBag(
+        name="B1",
+        vars=["A1", "A2", "A3"],
+        lambdas=["R1", "R2"],
+        parent=None,
+        children=["B2", "B3"],
+        weights={"R1": 1.0, "R2": 1.0},
+    )
+
+    # Bag B2: χ = {A1,A3}, λ = {R3}, fractional cover x_R3 = 1
+    bags["B2"] = FBag(
+        name="B2",
+        vars=["A1", "A3"],
+        lambdas=["R3"],
+        parent="B1",
+        children=[],
+        weights={"R3": 1.0},
+    )
+
+    # Bag B3: χ = {A3,A4,A5}, λ = {R4,R5}, fractional cover x_R4 = x_R5 = 1
+    bags["B3"] = FBag(
+        name="B3",
+        vars=["A3", "A4", "A5"],
+        lambdas=["R4", "R5"],
+        parent="B1",
+        children=["B4"],
+        weights={"R4": 1.0, "R5": 1.0},
+    )
+
+    # Bag B4: χ = {A4,A5,A6}, λ = {R6,R7}, fractional cover x_R6 = x_R7 = 1
+    bags["B4"] = FBag(
+        name="B4",
+        vars=["A4", "A5", "A6"],
+        lambdas=["R6", "R7"],
+        parent="B3",
+        children=[],
+        weights={"R6": 1.0, "R7": 1.0},
+    )
+
+    return bags
+
+
+# ===============================================================
+#  TABLE UTILITIES: RELATION → ROWS, NATURAL JOIN, PROJECTION, SEMIJOIN
+# ===============================================================
+def relation_to_rows(rname: str,
+                     relations: Dict[str, List[Tuple[int, ...]]]) -> List[Dict[str, int]]:
+    schema = SCHEMAS[rname]
+    rows: List[Dict[str, int]] = []
+    for tup in relations[rname]:
+        rows.append({attr: val for attr, val in zip(schema, tup)})
+    return rows
+
+
+def natural_join(t1: List[Dict[str, int]],
+                 t2: List[Dict[str, int]]) -> List[Dict[str, int]]:
+    """
+    Hash-based natural join on all common attributes between t1 and t2.
+    Uses the smaller table as build input.
+    """
+    if not t1 or not t2:
+        return []
+
+    # Common attributes
+    common = list(set(t1[0]).intersection(t2[0]))
+    if not common:
+        # Cartesian product if no overlapping attributes (doesn't happen in our query)
+        res: List[Dict[str, int]] = []
+        for r1 in t1:
+            for r2 in t2:
+                merged = r1.copy()
+                merged.update(r2)
+                res.append(merged)
+        return res
+
+    # Decide which side to build the hash table on (smaller one)
+    if len(t1) <= len(t2):
+        build, probe = t1, t2
+    else:
+        build, probe = t2, t1
+
+    # Build hash table
+    hash_tbl: Dict[Tuple[int, ...], List[Dict[str, int]]] = {}
+    for row in build:
+        key = tuple(row[a] for a in common)
+        hash_tbl.setdefault(key, []).append(row)
+
+    # Probe
+    res: List[Dict[str, int]] = []
+    for r in probe:
+        key = tuple(r[a] for a in common)
+        if key in hash_tbl:
+            for b in hash_tbl[key]:
+                merged = b.copy()
+                merged.update(r)
+                res.append(merged)
+
+    return res
+
+
+
+def project(table: List[Dict[str, int]],
+            attrs: List[str]) -> List[Dict[str, int]]:
+    return [{a: row[a] for a in attrs} for row in table]
+
+
+def semijoin(outer: List[Dict[str, int]],
+             inner: List[Dict[str, int]],
+             attrs: List[str]) -> List[Dict[str, int]]:
+    """
+    outer ⋉ inner on attrs:
+    keep only rows in 'outer' whose projection on 'attrs' appears in 'inner'.
+    """
+    if not attrs or not outer or not inner:
+        return outer
+
+    keyset: Set[Tuple[int, ...]] = {
+        tuple(row[a] for a in attrs) for row in inner
+    }
+
+    res: List[Dict[str, int]] = []
+    for row in outer:
+        key = tuple(row[a] for a in attrs)
+        if key in keyset:
+            res.append(row)
+    return res
+
+
+# ===============================================================
+#  AGM-GUIDED JOIN ORDER (HEURISTIC)
+# ===============================================================
+def choose_join_order_fhw(bag: FBag,
+                          relations: Dict[str, List[Tuple[int, ...]]]
+                          ) -> List[str]:
+    """
+    For each bag, choose a join order that is friendly to the AGM bound.
+    In this query each bag has width 1 and at most 2 relations, so the
+    worst-case AGM bound is minimized by joining smaller relations first.
+    We therefore sort λ(B) by |R| ascending.
+    """
+    lambdas = bag.lambdas
+    # Use relation cardinalities as a stand-in for AGM size bound
+    return sorted(lambdas, key=lambda rname: len(relations[rname]))
+
+
+
+def build_bag_tables_fhw(bags, relations, schemas):
+    """
+    bags: dict[name -> Bag], where Bag has .vars and .lambdas (list of rel names or atoms)
+    relations: dict[rel_name -> list of tuples/dicts]
+    schemas: dict[rel_name -> list of attribute names, e.g. ['A1','A3']]
+    """
+    tables = {}
+
+    for bname, bag in bags.items():
+        bag_vars = list(bag.vars)
+
+        # 1) Build the bag hypergraph
+        # vertices = variables in bag
+        vertices = set(bag_vars)
+        edges = []
+
+        for rel_name in bag.lambdas:
+            attrs = schemas[rel_name]           # e.g. ['A1','A3']
+            # Restrict to attrs that actually appear in this bag
+            bag_attrs = [a for a in attrs if a in vertices]
+            if not bag_attrs:
+                continue
+            edges.append((rel_name, bag_attrs))
+
+        # 2) Build a restricted "relations" view for this bag
+        # (GenericJoin can still use the full relation; it will just project internally.)
+        bag_relations = {
+            rel_name: relations[rel_name]
+            for (rel_name, _) in edges
+        }
+
+        # 3) Call GenericJoin on this small hypergraph
+        #    You may need to adapt this depending on your GenericJoin signature.
+        bag_hypergraph = {
+            "vars": list(vertices),
+            "edges": edges,   # list of (rel_name, [attrs])
+        }
+
+        bag_rows = generic_join_subquery(
+            vars_in_order=bag_vars,
+            edges=edges,
+            relations=bag_relations
+        )
+        # 4) Project result to bag.vars, if GenericJoin returns full tuples
+        #    (Skip this if your GenericJoin already only returns these vars.)
+        proj_rows = []
+        for row in bag_rows:
+            proj_rows.append({v: row[v] for v in bag_vars})
+
+        tables[bname] = proj_rows
+
+    return tables
+# ===============================================================
+#  PHASE 2: SEMIJOIN REDUCTIONS
+# ===============================================================
+def postorder(bags: Dict[str, FBag], root: str) -> List[str]:
+    res: List[str] = []
+
+    def dfs(bname: str):
+        for c in bags[bname].children:
+            dfs(c)
+        res.append(bname)
+
+    dfs(root)
+    return res
+
+
+def preorder(bags: Dict[str, FBag], root: str) -> List[str]:
+    res: List[str] = []
+
+    def dfs(bname: str):
+        res.append(bname)
+        for c in bags[bname].children:
+            dfs(c)
+
+    dfs(root)
+    return res
+
+
+def bottom_up_reduction_fhw(bags: Dict[str, FBag],
+                            bag_tables: Dict[str, List[Dict[str, int]]],
+                            root: str):
+    """
+    Children restrict parents (post-order).
+    """
+    order = postorder(bags, root)
+    for bname in order:
+        bag = bags[bname]
+        if bag.parent is None:
+            continue
+        parent = bags[bag.parent]
+        inter = [v for v in bag.vars if v in parent.vars]
+        parent_table = bag_tables[parent.name]
+        child_table = bag_tables[bname]
+        bag_tables[parent.name] = semijoin(parent_table, child_table, inter)
+
+
+def top_down_reduction_fhw(bags: Dict[str, FBag],
+                           bag_tables: Dict[str, List[Dict[str, int]]],
+                           root: str):
+    """
+    Parents restrict children (pre-order).
+    """
+    order = preorder(bags, root)
+    for bname in order:
+        bag = bags[bname]
+        for child_name in bag.children:
+            child = bags[child_name]
+            inter = [v for v in bag.vars if v in child.vars]
+            parent_table = bag_tables[bname]
+            child_table = bag_tables[child_name]
+            bag_tables[child_name] = semijoin(child_table, parent_table, inter)
+def evaluate_bag(bag: FBag,
+                 relations: Dict[str, List[Tuple[int, ...]]],
+                 schemas: Dict[str, List[str]],
+                 parent_constraints: Optional[List[Dict[str, int]]] = None):
+    """
+    Evaluate a bag using GenericJoin only *after* restricting the domains
+    using parent constraints (if provided).
+
+    parent_constraints: list of partial assignments from parent's table.
+    """
+
+    bag_vars = bag.vars
+    vertices = set(bag_vars)
+
+    # 1. Build bag edges
+    edges = []
+    for rel_name in bag.lambdas:
+        attrs = schemas[rel_name]
+        rel_attrs = [a for a in attrs if a in vertices]
+        if rel_attrs:
+            edges.append((rel_name, rel_attrs))
+
+    # 2. Restrict relation contents IF parent passed filtering assignments
+    # This avoids generating huge tables.
+    restricted_relations = {}
+
+    if parent_constraints is None:
+        # Use raw relations
+        for rel, _ in edges:
+            restricted_relations[rel] = relations[rel]
+    else:
+        # Filter each relation using parent constraint values
+        parent_values = {v: set() for v in bag_vars}
+        for row in parent_constraints:
+            for v in bag_vars:
+                if v in row:
+                    parent_values[v].add(row[v])
+
+        # Now filter tuples
+        for rel, attrs in edges:
+            keep = []
+            for tup in relations[rel]:
+                ok = True
+                for a, val in zip(schemas[rel], tup):
+                    if a in parent_values and parent_values[a]:
+                        if val not in parent_values[a]:
+                            ok = False
+                            break
+                if ok:
+                    keep.append(tup)
+            restricted_relations[rel] = keep
+
+    # 3. Call subquery GenericJoin
+    from generic_join import generic_join_subquery
+    bag_rows = generic_join_subquery(bag_vars, edges, restricted_relations)
+
+    # Normalize output to list[dict]
+    final_rows = []
+    for r in bag_rows:
+        final_rows.append({v: r[v] for v in bag_vars})
+
+    return final_rows
+
+def restrict_children(bags: Dict[str, FBag],
+                      parent: FBag,
+                      parent_table: List[Dict[str, int]]):
+    """
+    Compute variable domains inherited from parent_table and attach them
+    to each child bag for later filtering.
+    """
+    restrictions = {}
+
+    for child_name in parent.children:
+        child = bags[child_name]
+
+        inter = [v for v in parent.vars if v in child.vars]
+        allowed = {v: set() for v in inter}
+
+        for row in parent_table:
+            for v in inter:
+                allowed[v].add(row[v])
+
+        restrictions[child_name] = allowed
+
+    return restrictions
+
+# ===============================================================
+#  PHASE 3: ENUMERATION OF FINAL RESULTS
+# ===============================================================
+def enumerate_results_fhw(bags: Dict[str, FBag],
+                          bag_tables: Dict[str, List[Dict[str, int]]],
+                          root: str = "B1") -> List[Tuple[int, ...]]:
+    results: List[Tuple[int, ...]] = []
+
+    def dfs(bname: str, assignment: Dict[str, int]):
+        bag = bags[bname]
+        rows = bag_tables[bname]
+
+        shared = [v for v in bag.vars if v in assignment]
+
+        for row in rows:
+            if all(row[v] == assignment[v] for v in shared):
+                extended = assignment.copy()
+                for v in bag.vars:
+                    extended.setdefault(v, row[v])
+
+                # Only output at B4, the final bag containing A4, A5, A6
+                if bag.name == "B4":
+                    results.append(tuple(extended[a] for a in ATTR_ORDER))
+
+                else:
+                    for child_name in bag.children:
+                        dfs(child_name, extended)
+
+    dfs(root, {})
+    # De-duplicate just in case (tree should already prevent duplicates)
+    results = list(dict.fromkeys(results))
+    return results
+
+
+# ===============================================================
+#  MAIN: FHW EVALUATION
+# ===============================================================
+
+def fhw_evaluate(relations_dir: str = "query_relations"):
+    print("Loading relations...")
+    relations = load_relations(relations_dir)
+
+    print("Building fractional hypertree decomposition (fixed)...")
+    bags = build_fractional_bags()
+
+    root = "B1"
+
+    print("\n=== Phase 1: Local bag evaluation with early pruning ===")
+
+    # ---------------------------------------------------------
+    # 1. Evaluate ONLY the root bag
+    # ---------------------------------------------------------
+    print("Evaluating ROOT bag B1...")
+    B1_rows = evaluate_bag(
+        bag=bags[root],
+        relations=relations,
+        schemas=SCHEMAS,
+        parent_constraints=None,
+    )
+
+    bag_tables = {"B1": B1_rows}
+    print(f"B1 produced {len(B1_rows)} rows.")
+
+    # ---------------------------------------------------------
+    # 2. Restrict child domains BEFORE evaluating children
+    # ---------------------------------------------------------
+    print("Propagating restrictions from B1 to its children...")
+    restrictions = restrict_children(bags, bags[root], bag_tables[root])
+
+    # ---------------------------------------------------------
+    # 3. Evaluate children AFTER pruning
+    # ---------------------------------------------------------
+    '''
+    # Child B2
+    print("Evaluating B2 with B1 restrictions...")
+    B2_rows = evaluate_bag(
+        bag=bags["B2"],
+        relations=relations,
+        schemas=SCHEMAS,
+        parent_constraints=B1_rows,
+    )
+    
+    bag_tables["B2"] = B2_rows
+    print(f"B2 produced {len(B2_rows)} rows after pruning.")
+
+    # Child B3
+    print("Evaluating B3 with B1 restrictions...")
+    B3_rows = evaluate_bag(
+        bag=bags["B3"],
+        relations=relations,
+        schemas=SCHEMAS,
+        parent_constraints=B1_rows,
+    )
+    bag_tables["B3"] = B3_rows
+    print(f"B3 produced {len(B3_rows)} rows after pruning.")
+
+    # Child of B3: B4
+    print("Evaluating B4 with B3 restrictions...")
+    B4_rows = evaluate_bag(
+        bag=bags["B4"],
+        relations=relations,
+        schemas=SCHEMAS,
+        parent_constraints=B3_rows,
+    )
+    bag_tables["B4"] = B4_rows
+    print(f"B4 produced {len(B4_rows)} rows after pruning.")
+    '''
+
+    print("\n=== Phase 2: Semijoin reductions ===")
+
+    print("Bottom-up semijoin reduction...")
+    bottom_up_reduction_fhw(bags, bag_tables, root)
+
+    print("Top-down semijoin reduction...")
+    top_down_reduction_fhw(bags, bag_tables, root)
+
+    print("\n=== Phase 3: Enumeration ===")
+    output = enumerate_results_fhw(bags, bag_tables, root)
+
+    print(f"Number of result tuples: {len(output)}")
+    return output
+
+
+if __name__ == "__main__":
+    # Change this if your folder name is different
+    fhw_evaluate("query_relations")
