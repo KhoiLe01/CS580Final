@@ -1,4 +1,4 @@
-Results from Problem 2's implementation:
+Results from Problem 3's implementation:
 [248, 5, 8, 30]
 [287, 5, 8, 30]
 [978, 5, 8, 30]
@@ -1000,4 +1000,4 @@ Results from Problem 2's implementation:
 [333, 5, 8, 30]
 [289, 5, 8, 30]
 [646, 5, 8, 30]
-Execution time for problem 2's implementation: 0.6700491000665352 seconds
+Execution time for problem 3's implementation: 2.446217800024897 seconds

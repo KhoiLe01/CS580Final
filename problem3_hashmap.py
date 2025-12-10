@@ -1,6 +1,7 @@
 from problem2 import construct_hashmap_problem2
 
 # Problem 3 implementation hashmap: This implementation is directly join the line query from left to right using hashmap.
+# Not used in the report. Just used for personal comparison
 def construct_hashmap_problem3(arr, index):
     """
     Docstring for construct_hashmap_problem3
