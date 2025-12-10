@@ -1,8 +1,7 @@
 import random, time
 # Import the algorithm implementations from problem 2 and 3
 from problem2 import remove_dangling_tuple, get_result
-from problem3_hashmap import inner_join_left_to_right_efficient
-from problem3_bruteforce import inner_join_left_to_right_brute_force
+from problem3 import problem3_algo
 
 # Problem 4: Set up test database
 R1 = []
@@ -32,23 +31,12 @@ end_time = time.perf_counter()
 print(f"Execution time for problem 2's implementation: {end_time - start_time} seconds")
 
 start_time = time.perf_counter()
-result = inner_join_left_to_right_efficient(db)
-print("Results from Problem 3's implementation using hashmap:")
+result = problem3_algo(db)
+print("Results from Problem 3's implementation:")
 if not result:
     print("No result found.")
 else:
     for r in result:
         print(r)
 end_time = time.perf_counter()
-print(f"Execution time for problem 3's implementation using hashmap: {end_time - start_time} seconds")
-
-start_time = time.perf_counter()
-result = inner_join_left_to_right_brute_force(db)
-print("Results from Problem 3's implementation using bruteforce:")
-if not result:
-    print("No result found.")
-else:
-    for r in result:
-        print(r)
-end_time = time.perf_counter()
-print(f"Execution time for problem 3's implementation using bruteforce: {end_time - start_time} seconds")
+print(f"Execution time for problem 3's implementation: {end_time - start_time} seconds")
