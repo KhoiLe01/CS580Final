@@ -5,9 +5,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Set, Optional
 
 
-# ===============================================================
-#  SCHEMA FOR THE QUERY q(A1,...,A6)
-# ===============================================================
+
 SCHEMAS: Dict[str, List[str]] = {
     "R1": ["A1", "A2"],
     "R2": ["A2", "A3"],
@@ -21,9 +19,9 @@ SCHEMAS: Dict[str, List[str]] = {
 ATTR_ORDER = ["A1", "A2", "A3", "A4", "A5", "A6"]
 
 
-# ===============================================================
+
 #  LOAD RELATIONS
-# ===============================================================
+
 def load_relations(dir_path: str) -> Dict[str, List[Tuple[int, ...]]]:
     """
     Loads relations R1..R7 as lists of tuples (ints) from CSV files.
@@ -48,9 +46,9 @@ def load_relations(dir_path: str) -> Dict[str, List[Tuple[int, ...]]]:
     return relations
 
 
-# ===============================================================
+
 #  FRACTIONAL HYPERTREE DECOMPOSITION
-# ===============================================================
+
 @dataclass
 class FBag:
     name: str
@@ -116,9 +114,9 @@ def build_fractional_bags() -> Dict[str, FBag]:
     return bags
 
 
-# ===============================================================
+
 #  GLOBAL INDEXES (FIX 1)
-# ===============================================================
+
 def build_global_indexes(relations: Dict[str, List[Tuple[int, ...]]]):
     """
     Build global projections and adjacency maps once.
@@ -267,9 +265,9 @@ def bag_generic_join(
     return results
 
 
-# ===============================================================
-#  ENUMERATION OVER THE FHW TREE (LAZY BAG EVALUATION)
-# ===============================================================
+
+#  ENUMERATION OVER THE FHW TREE 
+
 def enumerate_fhw(
     bags: Dict[str, FBag],
     proj_global: Dict[Tuple[str, str], Set[int]],
@@ -324,9 +322,9 @@ def enumerate_fhw(
     return results
 
 
-# ===============================================================
-#  MAIN: FHW EVALUATION (LAZY + GLOBAL INDEXES)
-# ===============================================================
+
+#  MAIN: FHW EVALUATION 
+
 def fhw_lazy_evaluate(relations_dir: str = "query_relations") -> List[Tuple[int, ...]]:
     print("Loading relations...")
     relations = load_relations(relations_dir)
