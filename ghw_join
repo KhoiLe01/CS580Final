@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 
 
-############################################################
-# Global schema (same as generic_join.py)
-############################################################
+
+# Global schema
+
 SCHEMAS = {
     "R1": ["A1", "A2"],
     "R2": ["A2", "A3"],
@@ -21,9 +21,9 @@ SCHEMAS = {
 ATTR_ORDER = ["A1", "A2", "A3", "A4", "A5", "A6"]
 
 
-############################################################
+
 # Bag dataclass for the hypertree decomposition
-############################################################
+
 @dataclass
 class Bag:
     name: str
@@ -33,9 +33,9 @@ class Bag:
     children: List[str] = field(default_factory=list)
 
 
-############################################################
-# Load relations (identical logic to generic_join.py)
-############################################################
+
+# Load relations 
+
 def load_relations(dir_path):
     """
     Loads R1..R7 from dir_path and returns a dict name -> list of tuples.
@@ -58,9 +58,8 @@ def load_relations(dir_path):
     return relations
 
 
-############################################################
-# Build the fixed GHW decomposition (width 2)
-############################################################
+# GHW Decomp
+
 def build_bags():
     bags = {}
 
@@ -99,9 +98,9 @@ def build_bags():
     return bags
 
 
-############################################################
-# Basic relation-table utilities
-############################################################
+
+# Relation-Table stuff
+
 def relation_to_rows(rname, relations):
     schema = SCHEMAS[rname]
     rows = []
@@ -160,9 +159,9 @@ def semijoin_fast(outer, inner, attrs):
     ]
 
 
-############################################################
+
 # Bag-table construction
-############################################################
+
 def build_bag_tables(bags, relations):
     tables = {}
 
@@ -180,9 +179,9 @@ def build_bag_tables(bags, relations):
     return tables
 
 
-############################################################
+
 # Tree traversals and semijoin reductions
-############################################################
+
 def postorder(bags, root):
     order = []
 
@@ -223,9 +222,9 @@ def top_down(bags, tables, root="B1"):
             tables[c] = semijoin_fast(tables[c], tables[b], inter)
 
 
-############################################################
+
 # Child indexes for fast enumeration
-############################################################
+
 def build_child_indexes(bags, tables):
     """
     For each parent -> child edge, build an index on the child's
@@ -249,9 +248,9 @@ def build_child_indexes(bags, tables):
 
     return child_indexes
 
-############################################################
+
 # Enumeration of full results (with child indexes)
-############################################################
+
 def enumerate_results(bags, tables, child_indexes, root="B1"):
     results = []
 
