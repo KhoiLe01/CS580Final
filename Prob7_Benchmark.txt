@@ -1,0 +1,17 @@
+Note that these are from just one of the tests, I 
+ran the Benchmark.py file roughly 3-4x average them out, so here it is.
+Regardless, I presume due to my code requiring proprocessing overhead,
+that resulted in the performance we got. 
+
+---- Benchmarking ----
+GenericJoin: 1.0172 sec, results = 1000000
+GHW: 1.4101 sec, results = 1000000
+Loading relations...
+Building fractional hypertree decomposition...
+Building global indexes (projections + adjacency)...
+Running FHW evaluation (bag-local WCOJ with global indexes)...
+Number of result tuples: 1000000
+Runtime: 2.7375 seconds
+FHW (Lazy Optimized): 2.7395 sec, results = 1000000
+
+Process finished with exit code 0
