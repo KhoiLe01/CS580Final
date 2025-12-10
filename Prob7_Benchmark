@@ -1,6 +1,6 @@
 import time
 from generic_join import time_genericjoin
-from ghw_join import time_ghw         # if you still use your GHW
+from ghw_join import time_ghw        
 from fhw_lazy import fhw_lazy_evaluate
 
 def time_fhw_lazy(dirpath: str):
