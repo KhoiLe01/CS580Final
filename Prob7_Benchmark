@@ -1,0 +1,19 @@
+import time
+from generic_join import time_genericjoin
+from ghw_join import time_ghw         # if you still use your GHW
+from fhw_lazy import fhw_lazy_evaluate
+
+def time_fhw_lazy(dirpath: str):
+    start = time.time()
+    output = fhw_lazy_evaluate(dirpath)
+    end = time.time()
+    return end - start, len(output)
+
+if __name__ == "__main__":
+    print("---- Benchmarking ----")
+    gj_time, gj_size = time_genericjoin("query_relations")
+    print(f"GenericJoin: {gj_time:.4f} sec, results = {gj_size}")
+    ghw_time, ghw_size = time_ghw("query_relations")
+    print(f"GHW: {ghw_time:.4f} sec, results = {ghw_size}")
+    fhw_lazy_time, fhw_lazy_size = time_fhw_lazy("query_relations")
+    print(f"FHW (Lazy Optimized): {fhw_lazy_time:.4f} sec, results = {fhw_lazy_size}")
