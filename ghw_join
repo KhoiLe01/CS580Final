@@ -290,9 +290,8 @@ def enumerate_results(bags, tables, child_indexes, root="B1"):
 
 
 
-############################################################
-# Public API: run_ghw + time_ghw
-############################################################
+
+# run_ghw + time_ghw to track the time.
 def run_ghw(dirpath):
     relations = load_relations(dirpath)
     bags = build_bags()
@@ -324,9 +323,8 @@ def time_ghw(dirpath):
     return end - start, len(out)
 
 
-############################################################
-# Manual test
-############################################################
+# Manual test right below
+
 if __name__ == "__main__":
     t, size = time_ghw("query_relations")
     print("GHW runtime:", t)
